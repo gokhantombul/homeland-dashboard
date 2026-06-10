@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Homelab">
+  <meta name="theme-color" content="#030712">
+  <meta name="description" content="Proxmox Homelab Dashboard — monitor VMs and LXC containers">
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <title>Homelab Dashboard</title>
+
+  <!-- Tailwind CSS Play CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['-apple-system','BlinkMacSystemFont','Segoe UI','Helvetica Neue','Arial','sans-serif'],
+            mono: ['JetBrains Mono','ui-monospace','SFMono-Regular','Menlo','monospace'],
+          },
+          colors: {
+            slate: {
+              950: '#020617',
+            }
+          },
+          animation: {
+            'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'fade-in': 'fadeIn 0.3s ease-out',
+            'slide-up': 'slideUp 0.3s ease-out',
+          },
+          keyframes: {
+            fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+            slideUp: { '0%': { opacity: '0', transform: 'translateY(12px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+
+    body { background: #020617; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+
+    /* Progress bar */
+    .bar-track {
+      background: rgba(255,255,255,0.06);
+      border-radius: 99px;
+      overflow: hidden;
+      height: 6px;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width 0.6s ease;
+    }
+
+    /* Card shimmer on hover */
+    .resource-card {
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .resource-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+    }
+    .resource-card.running:hover { border-color: rgba(52, 211, 153, 0.35); }
+    .resource-card.stopped:hover { border-color: rgba(248, 113, 113, 0.35); }
+
+    /* Status pulse */
+    .status-dot-running { animation: ping-ring 2s ease-in-out infinite; }
+    @keyframes ping-ring {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0.5); }
+      50%       { box-shadow: 0 0 0 5px rgba(52,211,153,0); }
+    }
+
+    /* Toast */
+    #toast {
+      transition: all 0.3s ease;
+      pointer-events: none;
+    }
+
+    /* Modal backdrop blur */
+    #modal-overlay {
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+
+    /* Gradient text */
+    .grad-text {
+      background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* Safe area padding for PWA notch */
+    .safe-top    { padding-top:    env(safe-area-inset-top, 0px); }
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  </style>
+</head>
+
+<body class="min-h-screen text-slate-100 font-sans antialiased">
+
+  <!-- ───────────── HEADER ───────────── -->
+  <header class="sticky top-0 z-30 safe-top bg-slate-950/80 border-b border-slate-800/60"
+          style="backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16">
+        <!-- Logo + title -->
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="flex-shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/25">
+            <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/>
+            </svg>
+          </div>
+          <div class="min-w-0">
+            <h1 class="font-semibold text-base sm:text-lg leading-none grad-text truncate">Homelab Dashboard</h1>
+            <p class="text-xs text-slate-500 mt-0.5 hidden sm:block">Proxmox Resource Monitor</p>
+          </div>
+        </div>
+
+        <!-- Right actions -->
+        <div class="flex items-center gap-2">
+          <!-- Last refresh -->
+          <span class="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 bg-slate-800/60 px-3 py-1.5 rounded-full border border-slate-700/50">
+            <svg class="w-3 h-3 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
+              <circle cx="10" cy="10" r="5"/>
+            </svg>
+            <span id="last-refresh">{{.LastRefresh}}</span>
+          </span>
+
+          <!-- Refresh button -->
+          <button id="refresh-btn" onclick="refreshData()"
+                  class="w-9 h-9 rounded-xl bg-slate-800/60 border border-slate-700/50 flex items-center justify-center hover:bg-slate-700/60 active:scale-95 transition-all"
+                  title="Refresh">
+            <svg id="refresh-icon" class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+          </button>
+
+          <!-- PWA install -->
+          <button id="install-btn" onclick="installPWA()"
+                  class="hidden items-center gap-1.5 text-xs font-medium bg-sky-500/15 text-sky-300 border border-sky-500/30 px-3 py-1.5 rounded-xl hover:bg-sky-500/25 active:scale-95 transition-all">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+            </svg>
+            <span class="hidden sm:inline">Install App</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ───────────── DEMO BANNER ───────────── -->
+  {{if not .Config.HasWebhook}}
+  {{end}}
+
+  <!-- Error banner -->
+  {{if .Error}}
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+    <div class="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-2xl px-4 py-3 text-sm text-red-300">
+      <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+      </svg>
+      <div>
+        <p class="font-medium text-red-200">Failed to connect to Proxmox</p>
+        <p class="text-red-400/80 text-xs mt-0.5 font-mono">{{.Error}}</p>
+      </div>
+    </div>
+  </div>
+  {{end}}
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Demo mode chip -->
+    {{if eq .Stats.Total 7}}
+    <div class="flex items-center justify-center">
+      <span class="inline-flex items-center gap-2 text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 px-4 py-1.5 rounded-full">
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+          <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
+        </svg>
+        Demo mode — set PROXMOX_URL &amp; PROXMOX_TOKEN to use live data
+      </span>
+    </div>
+    {{end}}
+
+    <!-- ───────────── STATS ───────────── -->
+    <section class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+      <div class="bg-slate-900/60 border border-slate-800/60 rounded-2xl p-4 flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-indigo-500/15 flex items-center justify-center flex-shrink-0">
+          <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/>
+          </svg>
+        </div>
+        <div>
+          <p class="text-2xl font-bold text-slate-50" id="stat-total">{{.Stats.Total}}</p>
+          <p class="text-xs text-slate-500">Total Resources</p>
+        </div>
+      </div>
+
+      <div class="bg-slate-900/60 border border-slate-800/60 rounded-2xl p-4 flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center flex-shrink-0">
+          <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728M9 10l2 2 4-4"/>
+          </svg>
+        </div>
+        <div>
+          <p class="text-2xl font-bold text-emerald-400" id="stat-running">{{.Stats.Running}}</p>
+          <p class="text-xs text-slate-500">Running</p>
+        </div>
+      </div>
+
+      <div class="bg-slate-900/60 border border-slate-800/60 rounded-2xl p-4 flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-red-500/15 flex items-center justify-center flex-shrink-0">
+          <svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+        </div>
+        <div>
+          <p class="text-2xl font-bold text-red-400" id="stat-stopped">{{.Stats.Stopped}}</p>
+          <p class="text-xs text-slate-500">Stopped</p>
+        </div>
+      </div>
+
+      <div class="bg-slate-900/60 border border-slate-800/60 rounded-2xl p-4 flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-violet-500/15 flex items-center justify-center flex-shrink-0">
+          <svg class="w-5 h-5 text-violet-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/>
+          </svg>
+        </div>
+        <div>
+          <p class="text-2xl font-bold text-violet-400">
+            <span id="stat-vms">{{.Stats.VMs}}</span><span class="text-base text-slate-500">/</span><span id="stat-lxcs">{{.Stats.LXCs}}</span>
+          </p>
+          <p class="text-xs text-slate-500">VMs / LXCs</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────── RESOURCE GRID ───────────── -->
+    <section id="resources-grid" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+      {{range .Resources}}
+      {{$memPct := pct .Mem .MaxMem}}
+      {{$diskPct := pct .Disk .MaxDisk}}
+      {{$cpuNum  := cpuPct .CPU}}
+      <article class="resource-card {{.Status}} bg-slate-900/60 border border-slate-800/60 rounded-2xl overflow-hidden flex flex-col"
+               data-id="{{.ID}}" data-name="{{.Name}}" data-status="{{.Status}}">
+
+        <!-- Card header -->
+        <div class="px-5 pt-5 pb-4 flex items-start justify-between gap-3">
+          <div class="flex items-center gap-3 min-w-0">
+            <!-- Status dot -->
+            <div class="relative flex-shrink-0">
+              <div class="w-3 h-3 rounded-full {{statusDot .Status}} {{if eq .Status "running"}}status-dot-running{{end}}"></div>
+            </div>
+            <!-- Name + ID -->
+            <div class="min-w-0">
+              <h3 class="font-semibold text-sm sm:text-base text-slate-100 truncate leading-tight">{{.Name}}</h3>
+              <p class="text-xs text-slate-500 font-mono mt-0.5">
+                {{.Node}} &middot; ID {{.VMID}}
+                {{if .Tags}}&middot; <span class="text-sky-400/70">{{.Tags}}</span>{{end}}
+              </p>
+            </div>
+          </div>
+          <!-- Type badge -->
+          <span class="flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-lg border {{typeBadge .Type}}">
+            {{typeLabel .Type}}
+          </span>
+        </div>
+
+        <!-- Uptime strip -->
+        <div class="mx-5 mb-4 flex items-center gap-2 bg-slate-800/40 rounded-xl px-3 py-2">
+          <svg class="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span class="text-xs text-slate-400">
+            {{if eq .Status "running"}}
+              Up <strong class="text-slate-200 font-medium">{{formatUptime .Uptime}}</strong>
+            {{else}}
+              <span class="text-red-400">Offline</span>
+            {{end}}
+          </span>
+          <span class="ml-auto text-xs {{statusClass .Status}} font-medium">{{.Status}}</span>
+        </div>
+
+        <!-- Metrics -->
+        <div class="px-5 pb-4 space-y-3 flex-1">
+
+          <!-- CPU -->
+          <div class="space-y-1.5">
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-slate-400">CPU</span>
+              <span class="font-mono text-slate-300 {{cpuColor .CPU}}">{{$cpuNum}}%</span>
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill {{cpuColor .CPU}} opacity-90" style="width:{{$cpuNum}}%"></div>
+            </div>
+          </div>
+
+          <!-- RAM -->
+          <div class="space-y-1.5">
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-slate-400">RAM</span>
+              <span class="font-mono text-slate-300">{{formatBytes .Mem}} / {{formatBytes .MaxMem}}</span>
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill {{barColor $memPct}} opacity-90" style="width:{{printf "%.1f" $memPct}}%"></div>
+            </div>
+          </div>
+
+          <!-- Disk -->
+          <div class="space-y-1.5">
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-slate-400">Disk</span>
+              <span class="font-mono text-slate-300">{{formatBytes .Disk}} / {{formatBytes .MaxDisk}}</span>
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill {{barColor $diskPct}} opacity-90" style="width:{{printf "%.1f" $diskPct}}%"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card footer: alert button -->
+        <div class="px-5 pb-5 pt-1">
+          <button onclick="openNotifyModal('{{.Name}}', '{{.Status}}')"
+                  class="w-full flex items-center justify-center gap-2 text-xs font-medium
+                         bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/50 hover:border-slate-600/50
+                         text-slate-300 hover:text-slate-100 rounded-xl py-2.5 transition-all active:scale-95">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+            </svg>
+            Send Alert
+          </button>
+        </div>
+      </article>
+      {{end}}
+    </section>
+
+    <!-- Empty state -->
+    {{if eq .Stats.Total 0}}
+    <div class="flex flex-col items-center justify-center py-20 text-center">
+      <div class="w-16 h-16 rounded-2xl bg-slate-800/60 flex items-center justify-center mb-4">
+        <svg class="w-8 h-8 text-slate-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/>
+        </svg>
+      </div>
+      <p class="text-slate-400 font-medium">No resources found</p>
+      <p class="text-slate-600 text-sm mt-1">Check your Proxmox connection settings</p>
+    </div>
+    {{end}}
+
+    <!-- Footer -->
+    <footer class="text-center safe-bottom pb-4">
+      <p class="text-xs text-slate-700">
+        Homelab Dashboard &middot; Auto-refreshes every 30s &middot;
+        <span class="text-slate-600">Data: <span id="footer-refresh">{{.LastRefresh}}</span></span>
+      </p>
+    </footer>
+  </main>
+
+  <!-- ───────────── NOTIFICATION MODAL ───────────── -->
+  <div id="modal-overlay" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-slate-950/70"
+       onclick="closeModal(event)">
+    <div id="modal" class="w-full max-w-md bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden animate-slide-up"
+         onclick="event.stopPropagation()">
+
+      <!-- Modal header -->
+      <div class="px-6 pt-6 pb-4 border-b border-slate-800/60 flex items-start justify-between">
+        <div>
+          <h2 class="font-semibold text-base text-slate-100">Send Alert</h2>
+          <p class="text-xs text-slate-500 mt-0.5">
+            Service: <span id="modal-service" class="text-sky-400 font-mono font-medium"></span>
+            &nbsp;&middot;&nbsp;Status: <span id="modal-status" class="font-medium"></span>
+          </p>
+        </div>
+        <button onclick="closeModalDirect()"
+                class="w-8 h-8 rounded-lg bg-slate-800/60 flex items-center justify-center hover:bg-slate-700/60 transition-colors">
+          <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Modal body -->
+      <div class="px-6 py-5 space-y-5">
+        <!-- Notification channels -->
+        <div>
+          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Notification Channels</p>
+          <div class="space-y-2.5">
+
+            {{if .Config.HasWebhook}}
+            <label class="flex items-center gap-3 cursor-pointer group">
+              <div class="relative">
+                <input type="checkbox" id="ch-webhook" value="webhook" class="sr-only peer" checked>
+                <div class="w-5 h-5 rounded-md border-2 border-slate-600 peer-checked:border-sky-500 peer-checked:bg-sky-500/20 transition-all flex items-center justify-center">
+                  <svg class="w-3 h-3 text-sky-400 hidden peer-checked:block" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                </svg>
+                <span class="text-sm text-slate-300 group-hover:text-slate-100 transition-colors">Webhook</span>
+              </div>
+            </label>
+            {{end}}
+
+            {{if .Config.HasTelegram}}
+            <label class="flex items-center gap-3 cursor-pointer group">
+              <div class="relative">
+                <input type="checkbox" id="ch-telegram" value="telegram" class="sr-only peer" checked>
+                <div class="w-5 h-5 rounded-md border-2 border-slate-600 peer-checked:border-sky-500 peer-checked:bg-sky-500/20 transition-all flex items-center justify-center">
+                  <svg class="w-3 h-3 text-sky-400 hidden peer-checked:block" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-sky-400" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-2.012 9.48c-.148.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L6.15 14.555l-2.946-.92c-.64-.2-.653-.64.136-.948l11.498-4.43c.533-.194 1.002.13.724.99z"/>
+                </svg>
+                <span class="text-sm text-slate-300 group-hover:text-slate-100 transition-colors">Telegram</span>
+              </div>
+            </label>
+            {{end}}
+
+            {{if .Config.HasWhatsApp}}
+            <label class="flex items-center gap-3 cursor-pointer group">
+              <div class="relative">
+                <input type="checkbox" id="ch-whatsapp" value="whatsapp" class="sr-only peer">
+                <div class="w-5 h-5 rounded-md border-2 border-slate-600 peer-checked:border-emerald-500 peer-checked:bg-emerald-500/20 transition-all flex items-center justify-center">
+                  <svg class="w-3 h-3 text-emerald-400 hidden peer-checked:block" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-emerald-400" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                </svg>
+                <span class="text-sm text-slate-300 group-hover:text-slate-100 transition-colors">WhatsApp</span>
+              </div>
+            </label>
+            {{end}}
+
+            {{if .Config.HasSMS}}
+            <label class="flex items-center gap-3 cursor-pointer group">
+              <div class="relative">
+                <input type="checkbox" id="ch-sms" value="sms" class="sr-only peer">
+                <div class="w-5 h-5 rounded-md border-2 border-slate-600 peer-checked:border-amber-500 peer-checked:bg-amber-500/20 transition-all flex items-center justify-center">
+                  <svg class="w-3 h-3 text-amber-400 hidden peer-checked:block" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+                </svg>
+                <span class="text-sm text-slate-300 group-hover:text-slate-100 transition-colors">SMS</span>
+              </div>
+            </label>
+            {{end}}
+
+            <!-- No channels configured -->
+            {{if and (not .Config.HasWebhook) (not .Config.HasTelegram) (not .Config.HasWhatsApp) (not .Config.HasSMS)}}
+            <div class="flex items-center gap-2 text-amber-400/80 bg-amber-400/10 border border-amber-400/20 rounded-xl px-4 py-3 text-xs">
+              <svg class="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+              </svg>
+              No notification channels configured. Set environment variables to enable.
+            </div>
+            {{end}}
+          </div>
+        </div>
+
+        <!-- Custom message -->
+        <div>
+          <label for="modal-message" class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+            Message <span class="text-slate-600 font-normal normal-case">(optional)</span>
+          </label>
+          <textarea id="modal-message" rows="3" placeholder="Leave blank to use the default message…"
+                    class="w-full bg-slate-800/60 border border-slate-700/60 rounded-xl px-4 py-3 text-sm text-slate-200 placeholder-slate-600
+                           focus:outline-none focus:ring-1 focus:ring-sky-500/50 focus:border-sky-500/50 resize-none transition-colors"></textarea>
+        </div>
+      </div>
+
+      <!-- Modal footer -->
+      <div class="px-6 pb-6 flex gap-3">
+        <button onclick="closeModalDirect()"
+                class="flex-1 py-2.5 rounded-xl text-sm font-medium bg-slate-800/60 border border-slate-700/50
+                       text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-all active:scale-95">
+          Cancel
+        </button>
+        <button id="send-btn" onclick="sendNotification()"
+                class="flex-1 py-2.5 rounded-xl text-sm font-semibold
+                       bg-gradient-to-br from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500
+                       text-white shadow-lg shadow-sky-500/25 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+          Send Notification
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────── TOAST ───────────── -->
+  <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 opacity-0 translate-y-4 pointer-events-none
+                          flex items-center gap-2.5 bg-slate-800 border border-slate-700/60 rounded-2xl shadow-2xl
+                          px-5 py-3 text-sm font-medium min-w-max max-w-sm">
+    <span id="toast-icon" class="text-base"></span>
+    <span id="toast-text" class="text-slate-200"></span>
+  </div>
+
+  <!-- ───────────── SCRIPTS ───────────── -->
+  <script>
+    // ── PWA ──
+    let deferredPrompt;
+    window.addEventListener('beforeinstallprompt', e => {
+      e.preventDefault();
+      deferredPrompt = e;
+      document.getElementById('install-btn').classList.remove('hidden');
+      document.getElementById('install-btn').classList.add('flex');
+    });
+
+    function installPWA() {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then(r => {
+        if (r.outcome === 'accepted') {
+          document.getElementById('install-btn').classList.add('hidden');
+          document.getElementById('install-btn').classList.remove('flex');
+        }
+        deferredPrompt = null;
+      });
+    }
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/static/sw.js').catch(console.error);
+    }
+
+    // ── Modal state ──
+    let currentService = '';
+    let currentStatus  = '';
+
+    function openNotifyModal(service, status) {
+      currentService = service;
+      currentStatus  = status;
+      document.getElementById('modal-service').textContent = service;
+      const el = document.getElementById('modal-status');
+      el.textContent = status;
+      el.className = status === 'running' ? 'font-medium text-emerald-400' : 'font-medium text-red-400';
+      document.getElementById('modal-message').value = '';
+      const overlay = document.getElementById('modal-overlay');
+      overlay.classList.remove('hidden');
+      overlay.classList.add('flex');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeModal(e) {
+      if (e && e.target !== document.getElementById('modal-overlay')) return;
+      closeModalDirect();
+    }
+
+    function closeModalDirect() {
+      const overlay = document.getElementById('modal-overlay');
+      overlay.classList.add('hidden');
+      overlay.classList.remove('flex');
+      document.body.style.overflow = '';
+    }
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeModalDirect();
+    });
+
+    // ── Send notification ──
+    async function sendNotification() {
+      const channels = ['webhook','telegram','whatsapp','sms']
+        .filter(ch => {
+          const el = document.getElementById('ch-' + ch);
+          return el && el.checked;
+        });
+
+      if (channels.length === 0) {
+        showToast('⚠️', 'Select at least one channel', 'warn');
+        return;
+      }
+
+      const btn = document.getElementById('send-btn');
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+
+      const body = {
+        service:  currentService,
+        status:   currentStatus,
+        message:  document.getElementById('modal-message').value.trim(),
+        channels: channels,
+      };
+
+      try {
+        const res  = await fetch('/api/notify', {
+          method:  'POST',
+          headers: {'Content-Type': 'application/json'},
+          body:    JSON.stringify(body),
+        });
+        const data = await res.json();
+        closeModalDirect();
+
+        if (data.success) {
+          showToast('✅', 'Notifications sent to ' + channels.join(', '), 'ok');
+        } else {
+          const errs = Object.entries(data.results || {})
+            .filter(([,v]) => v.startsWith('error'))
+            .map(([k]) => k).join(', ');
+          showToast('⚠️', 'Some channels failed: ' + (errs || 'unknown'), 'warn');
+        }
+      } catch(err) {
+        showToast('❌', 'Request failed: ' + err.message, 'err');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Send Notification';
+      }
+    }
+
+    // ── Toast ──
+    let toastTimer;
+    function showToast(icon, text, type) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toast-icon').textContent = icon;
+      document.getElementById('toast-text').textContent = text;
+      toast.className = toast.className.replace(/\bborder-\S+/g, '');
+      const borders = {ok:'border-emerald-500/40', warn:'border-amber-500/40', err:'border-red-500/40'};
+      toast.classList.add(borders[type] || borders.ok);
+      toast.style.opacity = '1';
+      toast.style.transform = 'translateX(-50%) translateY(0)';
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(-50%) translateY(16px)';
+      }, 3500);
+    }
+
+    // ── Live data refresh ──
+    function formatBytes(b) {
+      if (b >= 1073741824) return (b/1073741824).toFixed(1) + ' GB';
+      if (b >= 1048576)    return (b/1048576).toFixed(1) + ' MB';
+      if (b >= 1024)       return (b/1024).toFixed(1) + ' KB';
+      return b + ' B';
+    }
+
+    function formatUptime(s) {
+      if (!s) return 'offline';
+      const d=Math.floor(s/86400), h=Math.floor((s%86400)/3600), m=Math.floor((s%3600)/60);
+      if (d) return `${d}d ${h}h ${m}m`;
+      if (h) return `${h}h ${m}m`;
+      return `${m}m`;
+    }
+
+    function pct(used, total) {
+      if (!total) return 0;
+      return Math.min(100, used / total * 100);
+    }
+
+    function barColorClass(p) {
+      if (p >= 90) return 'bg-red-500';
+      if (p >= 75) return 'bg-amber-500';
+      return 'bg-sky-500';
+    }
+
+    async function refreshData() {
+      const icon = document.getElementById('refresh-icon');
+      icon.style.animation = 'spin 1s linear infinite';
+      icon.style.transformOrigin = 'center';
+
+      try {
+        const res  = await fetch('/api/resources');
+        const data = await res.json();
+        if (data.error) return;
+        updateStats(data);
+        updateCards(data);
+        const now = new Date().toTimeString().slice(0,8);
+        document.getElementById('last-refresh').textContent = now;
+        document.getElementById('footer-refresh').textContent = now;
+      } catch(e) {
+        console.warn('Refresh failed:', e);
+      } finally {
+        icon.style.animation = '';
+      }
+    }
+
+    function updateStats(resources) {
+      let total=0, running=0, stopped=0, vms=0, lxcs=0;
+      resources.forEach(r => {
+        total++;
+        r.status === 'running' ? running++ : stopped++;
+        r.type === 'qemu' ? vms++ : lxcs++;
+      });
+      document.getElementById('stat-total').textContent = total;
+      document.getElementById('stat-running').textContent = running;
+      document.getElementById('stat-stopped').textContent = stopped;
+      document.getElementById('stat-vms').textContent = vms;
+      document.getElementById('stat-lxcs').textContent = lxcs;
+    }
+
+    function updateCards(resources) {
+      resources.forEach(r => {
+        const card = document.querySelector(`[data-id="${r.id}"]`);
+        if (!card) return;
+
+        const cpuPct   = (r.cpu * 100).toFixed(1);
+        const memPct   = pct(r.mem, r.maxmem).toFixed(1);
+        const diskPct  = pct(r.disk, r.maxdisk).toFixed(1);
+
+        // Status dot
+        const dot = card.querySelector('.status-dot-running, [class*="bg-red-500"][class*="rounded-full"], [class*="bg-emerald-500"][class*="rounded-full"]');
+        if (dot) {
+          dot.className = `w-3 h-3 rounded-full ${r.status === 'running' ? 'bg-emerald-500 status-dot-running' : 'bg-red-500'}`;
+        }
+
+        // Progress bars (CPU, RAM, Disk)
+        const bars = card.querySelectorAll('.bar-fill');
+        if (bars[0]) { bars[0].style.width = cpuPct  + '%'; bars[0].className = `bar-fill ${barColorClass(+cpuPct)} opacity-90`; }
+        if (bars[1]) { bars[1].style.width = memPct  + '%'; bars[1].className = `bar-fill ${barColorClass(+memPct)} opacity-90`; }
+        if (bars[2]) { bars[2].style.width = diskPct + '%'; bars[2].className = `bar-fill ${barColorClass(+diskPct)} opacity-90`; }
+
+        // Metric labels
+        const labels = card.querySelectorAll('.font-mono.text-slate-300');
+        if (labels[0]) labels[0].textContent = cpuPct + '%';
+        if (labels[1]) labels[1].textContent = `${formatBytes(r.mem)} / ${formatBytes(r.maxmem)}`;
+        if (labels[2]) labels[2].textContent = `${formatBytes(r.disk)} / ${formatBytes(r.maxdisk)}`;
+      });
+    }
+
+    // Auto-refresh every 30 seconds
+    setInterval(refreshData, 30000);
+
+    // CSS spin animation
+    const style = document.createElement('style');
+    style.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
+    document.head.appendChild(style);
+
+    // Custom checkbox visual
+    document.querySelectorAll('input[type="checkbox"].sr-only').forEach(input => {
+      const box = input.nextElementSibling;
+      const checkmark = box ? box.querySelector('svg') : null;
+      if (!box || !checkmark) return;
+      function sync() {
+        if (input.checked) { checkmark.classList.remove('hidden'); checkmark.classList.add('block'); }
+        else               { checkmark.classList.add('hidden');    checkmark.classList.remove('block'); }
+      }
+      input.addEventListener('change', sync);
+      sync();
+    });
+  </script>
+</body>
+</html>
