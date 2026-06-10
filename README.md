@@ -1,8 +1,257 @@
+# 🏠 Homelab Dashboard — Türkçe Dokümantasyon
+
+Proxmox altyapınızı izlemek için hafif, **tek çalıştırılabilir dosya** olarak dağıtılabilen, Go ile yazılmış, tam **PWA (İlerleyen Web Uygulaması)** destekli bir gösterge paneli. iOS ve Android'e yerel uygulama gibi kurulabilir.
+
+> **🇬🇧 İngilizce dokümantasyon** bu dosyanın alt yarısında yer almaktadır.
+
+---
+
+## İçindekiler
+
+- [Özellikler](#özellikler)
+- [Gereksinimler](#gereksinimler)
+- [Hızlı Başlangıç](#hızlı-başlangıç)
+- [Yapılandırma](#yapılandırma)
+- [Bildirim Kanalları](#bildirim-kanalları)
+- [PWA Kurulumu](#pwa-kurulumu)
+- [Kaynaktan Derleme](#kaynaktan-derleme)
+- [Docker](#docker)
+- [API Referansı](#api-referansı)
+
+---
+
+## Özellikler
+
+| Kategori | Detay |
+|---|---|
+| **Arka Uç** | Saf Go standart kütüphanesi (`net/http`, `html/template`, `embed`) |
+| **Proxmox** | API token kimlik doğrulamasıyla canlı VM & LXC verisi |
+| **Bildirimler** | Webhook, Telegram Bot, WhatsApp, SMS — ortam değişkenleriyle yapılandırılabilir |
+| **PWA** | iOS (Safari) ve Android (Chrome) üzerinde bağımsız uygulama olarak kurulabilir |
+| **Arayüz** | Premium koyu tema, önce mobil, Tailwind CSS |
+| **Tek binary** | Tüm dosyalar derlenmiş içine gömülü — tek dosya dağıtımı |
+| **Demo mod** | Proxmox olmadan çalışır (örnek verilerle) |
+| **Otomatik yenileme** | Sayfa yenilemesiz 30 saniyede bir canlı güncelleme |
+| **Çevrimdışı** | Service Worker kabuk önbelleğini yapar, çevrimdışı sayfa gösterir |
+
+---
+
+## Gereksinimler
+
+- **Go 1.21+** (derleme için)
+- **Proxmox VE** sunucusu (isteğe bağlı — demo mod Proxmox olmadan çalışır)
+- Dashboard sunucusundan Proxmox API portuna (`8006`) ağ erişimi
+
+---
+
+## Hızlı Başlangıç
+
+```bash
+# Depoyu klonla
+git clone https://github.com/gokhantombul/homeland-dashboard.git
+cd homeland-dashboard
+
+# Derle (tek binary, ~8 MB)
+go build -o homelab-dashboard .
+
+# Demo verisiyle çalıştır (Proxmox gerekmez)
+./homelab-dashboard
+
+# Tarayıcıda aç
+open http://localhost:8080
+```
+
+---
+
+## Yapılandırma
+
+Tüm yapılandırma **ortam değişkenleri** ile yapılır — ek dosya gerekmez.
+
+| Değişken | Varsayılan | Açıklama |
+|---|---|---|
+| `PROXMOX_URL` | *(boş)* | Proxmox sunucu adresi, örn. `https://192.168.1.100:8006` |
+| `PROXMOX_TOKEN` | *(boş)* | API token: `USER@REALM!TOKENID=SECRET` |
+| `PORT` | `8080` | HTTP dinleme portu |
+| `NOTIFICATION_SERVICE_URL` | *(boş)* | Genel webhook URL'si |
+| `TELEGRAM_BOT_TOKEN` | *(boş)* | Telegram bot token'ı |
+| `TELEGRAM_CHAT_ID` | *(boş)* | Telegram sohbet / kanal ID'si |
+| `WHATSAPP_WEBHOOK_URL` | *(boş)* | WhatsApp Business webhook URL'si |
+| `SMS_WEBHOOK_URL` | *(boş)* | SMS gateway webhook URL'si |
+
+### Proxmox API Token Oluşturma
+
+1. Proxmox web arayüzünde **Datacenter → Permissions → API Tokens** menüsüne gidin.
+2. Kullanıcınız için bir token oluşturun (örn. `root@pam!dashboard`).
+3. `/` yolunda en az **PVEAuditor** rolü verin (salt okunur yeterli).
+4. Ortam değişkenini ayarlayın:
+   ```bash
+   export PROXMOX_TOKEN="root@pam!dashboard=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+   ```
+
+### Örnek .env Dosyası
+
+```bash
+export PROXMOX_URL="https://192.168.1.100:8006"
+export PROXMOX_TOKEN="root@pam!dashboard=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+export PORT="8080"
+export TELEGRAM_BOT_TOKEN="123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+export TELEGRAM_CHAT_ID="-100123456789"
+export NOTIFICATION_SERVICE_URL="https://hooks.example.com/homelab"
+```
+
+---
+
+## Bildirim Kanalları
+
+Dashboard dört bildirim kanalını destekler; ilgili ortam değişkeni ayarlandığında kanal etkinleşir.
+
+### Webhook (Genel)
+
+`NOTIFICATION_SERVICE_URL` değişkenini ayarlayın. Sunucu aşağıdaki JSON'u POST eder:
+
+```json
+{
+  "service": "ubuntu-server",
+  "status": "stopped",
+  "message": "Service 'ubuntu-server' — status: stopped",
+  "time": "2025-06-10T14:30:00Z"
+}
+```
+
+**n8n**, **Home Assistant webhook'ları**, **Zapier**, **Make** vb. ile çalışır.
+
+### Telegram
+
+1. [@BotFather](https://t.me/botfather) üzerinden bir bot oluşturun → `TELEGRAM_BOT_TOKEN` alın.
+2. Botu grubunuza/kanalınıza ekleyin → `TELEGRAM_CHAT_ID` alın.
+3. Her iki değişkeni ayarlayın. Bildirimler Markdown formatında gönderilir.
+
+### WhatsApp
+
+`WHATSAPP_WEBHOOK_URL` değişkenini bir WhatsApp Business API webhook adresiyle ayarlayın\
+(ör. [Twilio WhatsApp](https://www.twilio.com/whatsapp), [360dialog](https://360dialog.com/) veya kendi altyapınız).\
+Aynı JSON yükü POST edilir.
+
+### SMS
+
+`SMS_WEBHOOK_URL` değişkenini herhangi bir HTTP SMS gateway adresiyle ayarlayın\
+(ör. [Twilio SMS](https://www.twilio.com/sms), [Vonage](https://www.vonage.com/), [NetGSM](https://www.netgsm.com.tr/)).\
+Aynı JSON yükü kullanılır.
+
+### Dashboard'dan Bildirim Gönderme
+
+Her VM/LXC kartında **"Send Alert"** butonu bulunur. Tıklandığında açılan modal'da:
+
+- Hangi kanalların kullanılacağını seçin (yalnızca yapılandırılmış kanallar görünür)
+- İsteğe bağlı özel mesaj yazın
+- **Send Notification** butonuna tıklayın
+
+Yanıtta kanal bazında başarı/hata durumu gösterilir.
+
+---
+
+## PWA Kurulumu
+
+### Android (Chrome / Edge)
+
+1. Chrome'da `http://<sunucu>:8080` adresini açın.
+2. Başlıktaki **"Install App"** butonuna ya da tarayıcı menüsünden **"Ana Ekrana Ekle"** seçeneğine dokunun.
+3. Uygulama tam ekran, bağımsız modda açılır.
+
+### iOS (Safari)
+
+1. URL'yi Safari'de açın.
+2. **Paylaş** butonuna dokunun (ok içeren dikdörtgen).
+3. **"Ana Ekrana Ekle"** seçeneğine dokunun.
+4. Uygulama simgesi ana ekranınızda görünür.
+
+### Masaüstü (Chrome / Edge)
+
+Adres çubuğundaki kurulum ikonuna veya dashboard başlığındaki **"Install App"** butonuna tıklayın.
+
+---
+
+## Kaynaktan Derleme
+
+```bash
+# Standart derleme
+go build -o homelab-dashboard .
+
+# Optimize edilmiş / küçük binary
+CGO_ENABLED=0 go build -ldflags="-s -w" -o homelab-dashboard .
+
+# Raspberry Pi için çapraz derleme (arm64)
+GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o homelab-dashboard-arm64 .
+
+# arm (32-bit) için çapraz derleme
+GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o homelab-dashboard-armv7 .
+```
+
+---
+
+## Docker
+
+```bash
+docker build -t homelab-dashboard .
+docker run -p 8080:8080 \
+  -e PROXMOX_URL="https://192.168.1.100:8006" \
+  -e PROXMOX_TOKEN="root@pam!dashboard=..." \
+  -e TELEGRAM_BOT_TOKEN="..." \
+  -e TELEGRAM_CHAT_ID="..." \
+  homelab-dashboard
+```
+
+---
+
+## API Referansı
+
+### `GET /`
+
+Render edilmiş HTML dashboard sayfasını döner.
+
+### `GET /api/resources`
+
+Proxmox kaynak verilerini JSON olarak döner.
+
+### `POST /api/notify`
+
+Bir veya birden fazla kanala bildirim gönderir.
+
+**İstek gövdesi:**
+
+```json
+{
+  "service": "ubuntu-server",
+  "status": "stopped",
+  "message": "İsteğe bağlı özel mesaj",
+  "channels": ["telegram", "webhook"]
+}
+```
+
+**Yanıt:**
+
+```json
+{
+  "success": true,
+  "results": {
+    "telegram": "ok",
+    "webhook": "ok"
+  }
+}
+```
+
+---
+
+## Lisans
+
+MIT © 2025 Gökhan Tombul
+
+---
+---
+
 # 🏠 Homelab Dashboard
 
 A lightweight, **single-binary** Proxmox monitoring dashboard written in Go with full **Progressive Web App (PWA)** support. Installable on iOS and Android just like a native app.
-
-> **🇹🇷 Türkçe döküman** bu dosyanın alt yarısında yer almaktadır.
 
 ---
 
@@ -16,7 +265,7 @@ A lightweight, **single-binary** Proxmox monitoring dashboard written in Go with
 - [Notification Channels](#notification-channels)
 - [PWA Installation](#pwa-installation)
 - [Building from Source](#building-from-source)
-- [Docker](#docker)
+- [Docker](#docker-1)
 - [Project Structure](#project-structure)
 - [API Reference](#api-reference)
 - [License](#license)
@@ -128,14 +377,14 @@ Works with **n8n**, **Home Assistant webhooks**, **Zapier**, **Make**, etc.
 
 ### WhatsApp
 
-Set `WHATSAPP_WEBHOOK_URL` to a WhatsApp Business API webhook endpoint  
-(e.g. [Twilio WhatsApp](https://www.twilio.com/whatsapp), [360dialog](https://360dialog.com/), or a self-hosted gateway).  
+Set `WHATSAPP_WEBHOOK_URL` to a WhatsApp Business API webhook endpoint\
+(e.g. [Twilio WhatsApp](https://www.twilio.com/whatsapp), [360dialog](https://360dialog.com/), or a self-hosted gateway).\
 The same JSON payload as the generic webhook is POST-ed.
 
 ### SMS
 
-Set `SMS_WEBHOOK_URL` to any HTTP SMS gateway endpoint  
-(e.g. [Twilio SMS](https://www.twilio.com/sms), [Vonage](https://www.vonage.com/), [BulkSMS](https://www.bulksms.com/)).  
+Set `SMS_WEBHOOK_URL` to any HTTP SMS gateway endpoint\
+(e.g. [Twilio SMS](https://www.twilio.com/sms), [Vonage](https://www.vonage.com/), [BulkSMS](https://www.bulksms.com/)).\
 Same JSON payload.
 
 ### Routing alerts from the dashboard
@@ -313,254 +562,5 @@ Dynamically generated PNG icons (embedded in the binary, no external files).
 ---
 
 ## License
-
-MIT © 2025 Gökhan Tombul
-
----
----
-
-# 🏠 Homelab Dashboard — Türkçe Dokümantasyon
-
-Proxmox altyapınızı izlemek için hafif, **tek çalıştırılabilir dosya** olarak dağıtılabilen, Go ile yazılmış, tam **PWA (İlerleyen Web Uygulaması)** destekli bir gösterge paneli. iOS ve Android'e yerel uygulama gibi kurulabilir.
-
----
-
-## İçindekiler
-
-- [Özellikler](#özellikler)
-- [Gereksinimler](#gereksinimler)
-- [Hızlı Başlangıç](#hızlı-başlangıç)
-- [Yapılandırma](#yapılandırma)
-- [Bildirim Kanalları](#bildirim-kanalları)
-- [PWA Kurulumu](#pwa-kurulumu)
-- [Kaynaktan Derleme](#kaynaktan-derleme)
-- [Docker](#docker-1)
-- [API Referansı](#api-referansı)
-
----
-
-## Özellikler
-
-| Kategori | Detay |
-|---|---|
-| **Arka Uç** | Saf Go standart kütüphanesi (`net/http`, `html/template`, `embed`) |
-| **Proxmox** | API token kimlik doğrulamasıyla canlı VM & LXC verisi |
-| **Bildirimler** | Webhook, Telegram Bot, WhatsApp, SMS — ortam değişkenleriyle yapılandırılabilir |
-| **PWA** | iOS (Safari) ve Android (Chrome) üzerinde bağımsız uygulama olarak kurulabilir |
-| **Arayüz** | Premium koyu tema, önce mobil, Tailwind CSS |
-| **Tek binary** | Tüm dosyalar derlenmiş içine gömülü — tek dosya dağıtımı |
-| **Demo mod** | Proxmox olmadan çalışır (örnek verilerle) |
-| **Otomatik yenileme** | Sayfa yenilemesiz 30 saniyede bir canlı güncelleme |
-| **Çevrimdışı** | Service Worker kabuk önbelleğini yapar, çevrimdışı sayfa gösterir |
-
----
-
-## Gereksinimler
-
-- **Go 1.21+** (derleme için)
-- **Proxmox VE** sunucusu (isteğe bağlı — demo mod Proxmox olmadan çalışır)
-- Dashboard sunucusundan Proxmox API portuna (`8006`) ağ erişimi
-
----
-
-## Hızlı Başlangıç
-
-```bash
-# Depoyu klonla
-git clone https://github.com/gokhantombul/homeland-dashboard.git
-cd homeland-dashboard
-
-# Derle (tek binary, ~8 MB)
-go build -o homelab-dashboard .
-
-# Demo verisiyle çalıştır (Proxmox gerekmez)
-./homelab-dashboard
-
-# Tarayıcıda aç
-open http://localhost:8080
-```
-
----
-
-## Yapılandırma
-
-Tüm yapılandırma **ortam değişkenleri** ile yapılır — ek dosya gerekmez.
-
-| Değişken | Varsayılan | Açıklama |
-|---|---|---|
-| `PROXMOX_URL` | *(boş)* | Proxmox sunucu adresi, örn. `https://192.168.1.100:8006` |
-| `PROXMOX_TOKEN` | *(boş)* | API token: `USER@REALM!TOKENID=SECRET` |
-| `PORT` | `8080` | HTTP dinleme portu |
-| `NOTIFICATION_SERVICE_URL` | *(boş)* | Genel webhook URL'si |
-| `TELEGRAM_BOT_TOKEN` | *(boş)* | Telegram bot token'ı |
-| `TELEGRAM_CHAT_ID` | *(boş)* | Telegram sohbet / kanal ID'si |
-| `WHATSAPP_WEBHOOK_URL` | *(boş)* | WhatsApp Business webhook URL'si |
-| `SMS_WEBHOOK_URL` | *(boş)* | SMS gateway webhook URL'si |
-
-### Proxmox API Token Oluşturma
-
-1. Proxmox web arayüzünde **Datacenter → Permissions → API Tokens** menüsüne gidin.
-2. Kullanıcınız için bir token oluşturun (örn. `root@pam!dashboard`).
-3. `/` yolunda en az **PVEAuditor** rolü verin (salt okunur yeterli).
-4. Ortam değişkenini ayarlayın:
-   ```bash
-   export PROXMOX_TOKEN="root@pam!dashboard=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-   ```
-
-### Örnek .env Dosyası
-
-```bash
-export PROXMOX_URL="https://192.168.1.100:8006"
-export PROXMOX_TOKEN="root@pam!dashboard=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-export PORT="8080"
-export TELEGRAM_BOT_TOKEN="123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-export TELEGRAM_CHAT_ID="-100123456789"
-export NOTIFICATION_SERVICE_URL="https://hooks.example.com/homelab"
-```
-
----
-
-## Bildirim Kanalları
-
-Dashboard dört bildirim kanalını destekler; ilgili ortam değişkeni ayarlandığında kanal etkinleşir.
-
-### Webhook (Genel)
-
-`NOTIFICATION_SERVICE_URL` değişkenini ayarlayın. Sunucu aşağıdaki JSON'u POST eder:
-
-```json
-{
-  "service": "ubuntu-server",
-  "status": "stopped",
-  "message": "Service 'ubuntu-server' — status: stopped",
-  "time": "2025-06-10T14:30:00Z"
-}
-```
-
-**n8n**, **Home Assistant webhook'ları**, **Zapier**, **Make** vb. ile çalışır.
-
-### Telegram
-
-1. [@BotFather](https://t.me/botfather) üzerinden bir bot oluşturun → `TELEGRAM_BOT_TOKEN` alın.
-2. Botu grubunuza/kanalınıza ekleyin → `TELEGRAM_CHAT_ID` alın.
-3. Her iki değişkeni ayarlayın. Bildirimler Markdown formatında gönderilir.
-
-### WhatsApp
-
-`WHATSAPP_WEBHOOK_URL` değişkenini bir WhatsApp Business API webhook adresiyle ayarlayın  
-(ör. [Twilio WhatsApp](https://www.twilio.com/whatsapp), [360dialog](https://360dialog.com/) veya kendi altyapınız).  
-Aynı JSON yükü POST edilir.
-
-### SMS
-
-`SMS_WEBHOOK_URL` değişkenini herhangi bir HTTP SMS gateway adresiyle ayarlayın  
-(ör. [Twilio SMS](https://www.twilio.com/sms), [Vonage](https://www.vonage.com/), [NetGSM](https://www.netgsm.com.tr/)).  
-Aynı JSON yükü kullanılır.
-
-### Dashboard'dan Bildirim Gönderme
-
-Her VM/LXC kartında **"Send Alert"** butonu bulunur. Tıklandığında açılan modal'da:
-
-- Hangi kanalların kullanılacağını seçin (yalnızca yapılandırılmış kanallar görünür)
-- İsteğe bağlı özel mesaj yazın
-- **Send Notification** butonuna tıklayın
-
-Yanıtta kanal bazında başarı/hata durumu gösterilir.
-
----
-
-## PWA Kurulumu
-
-### Android (Chrome / Edge)
-
-1. Chrome'da `http://<sunucu>:8080` adresini açın.
-2. Başlıktaki **"Install App"** butonuna ya da tarayıcı menüsünden **"Ana Ekrana Ekle"** seçeneğine dokunun.
-3. Uygulama tam ekran, bağımsız modda açılır.
-
-### iOS (Safari)
-
-1. URL'yi Safari'de açın.
-2. **Paylaş** butonuna dokunun (ok içeren dikdörtgen).
-3. **"Ana Ekrana Ekle"** seçeneğine dokunun.
-4. Uygulama simgesi ana ekranınızda görünür.
-
-### Masaüstü (Chrome / Edge)
-
-Adres çubuğundaki kurulum ikonuna veya dashboard başlığındaki **"Install App"** butonuna tıklayın.
-
----
-
-## Kaynaktan Derleme
-
-```bash
-# Standart derleme
-go build -o homelab-dashboard .
-
-# Optimize edilmiş / küçük binary
-CGO_ENABLED=0 go build -ldflags="-s -w" -o homelab-dashboard .
-
-# Raspberry Pi için çapraz derleme (arm64)
-GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o homelab-dashboard-arm64 .
-
-# arm (32-bit) için çapraz derleme
-GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o homelab-dashboard-armv7 .
-```
-
----
-
-## Docker
-
-```bash
-docker build -t homelab-dashboard .
-docker run -p 8080:8080 \
-  -e PROXMOX_URL="https://192.168.1.100:8006" \
-  -e PROXMOX_TOKEN="root@pam!dashboard=..." \
-  -e TELEGRAM_BOT_TOKEN="..." \
-  -e TELEGRAM_CHAT_ID="..." \
-  homelab-dashboard
-```
-
----
-
-## API Referansı
-
-### `GET /`
-
-Render edilmiş HTML dashboard sayfasını döner.
-
-### `GET /api/resources`
-
-Proxmox kaynak verilerini JSON olarak döner.
-
-### `POST /api/notify`
-
-Bir veya birden fazla kanala bildirim gönderir.
-
-**İstek gövdesi:**
-
-```json
-{
-  "service": "ubuntu-server",
-  "status": "stopped",
-  "message": "İsteğe bağlı özel mesaj",
-  "channels": ["telegram", "webhook"]
-}
-```
-
-**Yanıt:**
-
-```json
-{
-  "success": true,
-  "results": {
-    "telegram": "ok",
-    "webhook": "ok"
-  }
-}
-```
-
----
-
-## Lisans
 
 MIT © 2025 Gökhan Tombul
